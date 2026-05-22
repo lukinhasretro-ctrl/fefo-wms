@@ -9,7 +9,8 @@ from contextlib import contextmanager
 
 app = FastAPI(title="FEFO WMS Controller")
 
-DB_PATH = "fefo.db"
+import os
+DB_PATH = os.environ.get("DB_PATH", "/data/fefo.db") if os.path.exists("/data") else "fefo.db"
 
 # ── banco ──────────────────────────────────────────────────────────
 def init_db():
@@ -302,4 +303,6 @@ def exportar():
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=fefo_estoque.csv"})
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
