@@ -334,6 +334,36 @@ async def importar_csv(payload: dict):
                 erros.append(f"Linha {i}: {str(e)}")
     return {"importados": ok, "erros": erros}
 
+
+@app.post("/api/lotes/baixa-vencidos")
+async def baixa_vencidos(payload: dict):
+    usuario = payload.get("usuario", "sistema")
+    obs     = payload.get("obs", "Baixa de vencidos em lote")
+    ids     = payload.get("ids", [])  # lista vazia = todos vencidos
+    baixados, erros = 0, []
+    with get_db() as con:
+        cur = con.cursor()
+        if ids:
+            placeholders = ','.join([PH]*len(ids))
+            cur.execute(f"SELECT * FROM lotes WHERE id IN ({placeholders}) AND ativo=1 AND quantidade>0", ids)
+        else:
+            today = date.today().isoformat()
+            cur.execute(f"SELECT * FROM lotes WHERE validade < {PH} AND ativo=1 AND quantidade>0", (today,))
+        rows = cur.fetchall()
+        if not rows:
+            return {"baixados": 0, "erros": [], "msg": "Nenhum lote vencido encontrado"}
+        for row in rows:
+            try:
+                d = dict(row)
+                cur.execute(f"INSERT INTO movimentos (lote_id,tipo,quantidade,usuario,obs) VALUES ({PH},{PH},{PH},{PH},{PH})",
+                            (d["id"], "SAIDA", d["quantidade"], usuario, obs))
+                cur.execute(f"UPDATE lotes SET quantidade=0, ativo=0 WHERE id={PH}", (d["id"],))
+                baixados += 1
+            except Exception as e:
+                erros.append(f"Lote {d.get('lote','?')}: {str(e)}")
+    return {"baixados": baixados, "erros": erros,
+            "msg": f"{baixados} lote(s) baixado(s) com sucesso"}
+
 @app.get("/api/exportar")
 def exportar():
     with get_db() as con:
