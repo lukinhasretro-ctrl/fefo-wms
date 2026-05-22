@@ -223,8 +223,8 @@
       <div class="card">
         <div class="card-title">Novo lote recebido</div>
         <div class="form-grid g4">
-          <div class="field"><label>SKU *</label><input type="text" id="r-sku" placeholder="ex: SKU-001"></div>
-          <div class="field"><label>Descrição</label><input type="text" id="r-desc" placeholder="ex: Leite UHT 1L"></div>
+          <div class="field"><label>SKU *</label><input type="text" id="r-sku" placeholder="ex: SKU-001" oninput="autocompleteSku()" autocomplete="off"></div>
+          <div class="field"><label>Descrição <span id="r-desc-hint" style="font-size:10px; color:var(--ok); display:none">&#10003; automático</span></label><input type="text" id="r-desc" placeholder="ex: Leite UHT 1L"></div>
           <div class="field"><label>Nº do Lote *</label><input type="text" id="r-lote" placeholder="ex: LOT-2025-01"></div>
           <div class="field"><label>Data de validade *</label><input type="date" id="r-validade"></div>
         </div>
@@ -234,7 +234,7 @@
             <select id="r-un"><option>UN</option><option>CX</option><option>KG</option><option>L</option><option>PCT</option><option>FD</option><option>SC</option></select>
           </div>
           <div class="field"><label>Endereço WMS *</label><input type="text" id="r-end" placeholder="ex: A-01-01"></div>
-          <div class="field"><label>Fornecedor</label><input type="text" id="r-forn" placeholder="ex: Laticínios SA"></div>
+          <div class="field"><label>Fornecedor <span id="r-forn-hint" style="font-size:10px; color:var(--ok); display:none">&#10003; automático</span></label><input type="text" id="r-forn" placeholder="ex: Laticínios SA"></div>
         </div>
         <div class="form-actions" style="margin-top:16px">
           <button class="btn" onclick="limparForm()">Limpar</button>
@@ -468,8 +468,39 @@ async function registrarLote() {
   } catch(e) { toast(e.message, 'err'); }
 }
 
+let _skuTimer = null;
+async function autocompleteSku() {
+  clearTimeout(_skuTimer);
+  const sku = document.getElementById('r-sku').value.trim();
+  if(sku.length < 3) return;
+  _skuTimer = setTimeout(async () => {
+    try {
+      const data = await api('/api/skus/' + encodeURIComponent(sku));
+      const descEl = document.getElementById('r-desc');
+      const fornEl = document.getElementById('r-forn');
+      const unEl   = document.getElementById('r-un');
+      // só preenche se campo estiver vazio
+      if(!descEl.value && data.descricao) {
+        descEl.value = data.descricao;
+        document.getElementById('r-desc-hint').style.display = 'inline';
+      }
+      if(!fornEl.value && data.fornecedor) {
+        fornEl.value = data.fornecedor;
+        document.getElementById('r-forn-hint').style.display = 'inline';
+      }
+      if(data.unidade) {
+        const opt = [...unEl.options].find(o => o.value === data.unidade);
+        if(opt) unEl.value = data.unidade;
+      }
+    } catch(e) {
+      // SKU novo, sem histórico — ok, não faz nada
+    }
+  }, 500);
+}
+
 function limparForm() {
   ['r-sku','r-desc','r-lote','r-validade','r-qty','r-end','r-forn'].forEach(id => document.getElementById(id).value = '');
+  ['r-desc-hint','r-forn-hint'].forEach(id => document.getElementById(id).style.display = 'none');
 }
 
 // ── estoque ────────────────────────────────────────────────────────
