@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FEFO — Controle de Lote e Validade</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #f7f6f3;
+    --surface: #ffffff;
+    --border: #e2e0d8;
+    --border-strong: #c8c6bc;
+    --text: #1a1916;
+    --text-2: #6b6960;
+    --text-3: #9b9a94;
+    --accent: #1a1916;
+    --ok: #2d6a2d; --ok-bg: #eaf3ea;
+    --warn: #7a4f00; --warn-bg: #fef3dc;
+    --danger: #8b1a1a; --danger-bg: #fdeaea;
+    --blue: #1a4a7a; --blue-bg: #e8f0fa;
+    --radius: 8px;
+    --font: 'IBM Plex Sans', sans-serif;
+    --mono: 'IBM Plex Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+
+  /* layout */
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar { width: 220px; background: var(--text); color: #fff; padding: 0; flex-shrink: 0; display: flex; flex-direction: column; }
+  .sidebar-logo { padding: 20px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+  .sidebar-logo .title { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+  .sidebar-logo .sub { font-size: 11px; opacity: 0.5; margin-top: 2px; font-family: var(--mono); }
+  .nav { padding: 12px 0; flex: 1; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 20px; cursor: pointer; font-size: 13px; color: rgba(255,255,255,0.65); transition: all 0.15s; border-left: 3px solid transparent; }
+  .nav-item:hover { color: #fff; background: rgba(255,255,255,0.06); }
+  .nav-item.active { color: #fff; background: rgba(255,255,255,0.1); border-left-color: #fff; }
+  .nav-icon { font-size: 16px; width: 18px; text-align: center; }
+  .sidebar-footer { padding: 16px 20px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 11px; opacity: 0.4; font-family: var(--mono); }
+
+  .main { flex: 1; overflow: auto; }
+  .page { display: none; padding: 32px; max-width: 1100px; }
+  .page.active { display: block; }
+
+  .page-header { margin-bottom: 28px; }
+  .page-header h1 { font-size: 20px; font-weight: 600; }
+  .page-header p { color: var(--text-2); font-size: 13px; margin-top: 4px; }
+
+  /* cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .card-title { font-size: 13px; font-weight: 500; margin-bottom: 16px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* metrics */
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .metric { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .metric-val { font-size: 28px; font-weight: 600; line-height: 1; font-family: var(--mono); }
+  .metric-label { font-size: 12px; color: var(--text-2); margin-top: 6px; }
+  .metric-val.danger { color: var(--danger); }
+  .metric-val.warn { color: var(--warn); }
+
+  /* form */
+  .form-grid { display: grid; gap: 12px; }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .g3 { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .g4 { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .field label { display: block; font-size: 11px; font-weight: 500; color: var(--text-2); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.05em; }
+  input[type=text], input[type=number], input[type=date], select, textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    font-family: var(--font); font-size: 13px; background: var(--bg); color: var(--text);
+    transition: border-color 0.15s;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--text); background: #fff; }
+  .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+
+  /* buttons */
+  .btn { padding: 8px 16px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); font-family: var(--font); font-size: 13px; cursor: pointer; transition: all 0.15s; }
+  .btn:hover { background: var(--bg); }
+  .btn-primary { background: var(--text); color: #fff; border-color: var(--text); }
+  .btn-primary:hover { opacity: 0.85; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-ghost { border-color: transparent; background: transparent; }
+  .btn-ghost:hover { background: var(--bg); }
+  .btn-danger { color: var(--danger); border-color: #f5c1c1; }
+  .btn-danger:hover { background: var(--danger-bg); }
+
+  /* table */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { text-align: left; font-size: 11px; font-weight: 500; color: var(--text-3); padding: 6px 10px; border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+  tbody td { padding: 10px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #fafaf8; }
+
+  /* badges */
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  .badge-danger { background: var(--danger-bg); color: var(--danger); }
+  .badge-info { background: var(--blue-bg); color: var(--blue); }
+
+  /* mono tag */
+  .mono-tag { font-family: var(--mono); font-size: 12px; background: var(--bg); padding: 2px 7px; border-radius: 4px; border: 1px solid var(--border); }
+
+  /* toast */
+  #toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 18px; border-radius: 8px; font-size: 13px; font-weight: 500; display: none; z-index: 999; max-width: 360px; }
+  #toast.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #b8d8b8; }
+  #toast.err { background: var(--danger-bg); color: var(--danger); border: 1px solid #f5c1c1; }
+
+  /* fefo */
+  .fefo-card { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; overflow: hidden; }
+  .fefo-card.rank-1 { border-color: #f5c1c1; }
+  .fefo-card.rank-2 { border-color: #f5d9a0; }
+  .fefo-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg); }
+  .rank-num { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex-shrink: 0; font-family: var(--mono); }
+  .rank-1 .rank-num { background: var(--danger-bg); color: var(--danger); }
+  .rank-2 .rank-num { background: var(--warn-bg); color: var(--warn); }
+  .rank-n .rank-num { background: var(--bg); color: var(--text-3); border: 1px solid var(--border); }
+  .fefo-body { padding: 12px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .fefo-info { flex: 1; min-width: 200px; }
+  .fefo-lote { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+  .fefo-detail { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+  .fefo-sep { text-align: right; }
+  .fefo-sep-qty { font-size: 20px; font-weight: 600; font-family: var(--mono); color: var(--ok); }
+  .fefo-sep-label { font-size: 11px; color: var(--text-3); }
+
+  /* modal */
+  .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center; }
+  .modal-bg.open { display: flex; }
+  .modal { background: var(--surface); border-radius: var(--radius); padding: 24px; width: 480px; max-width: 95vw; }
+  .modal h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+
+  /* import */
+  .drop-area { border: 2px dashed var(--border-strong); border-radius: var(--radius); padding: 32px; text-align: center; cursor: pointer; color: var(--text-2); font-size: 13px; transition: all 0.15s; }
+  .drop-area:hover { background: var(--bg); border-color: var(--text-3); }
+  .drop-area input { display: none; }
+
+  .empty { text-align: center; padding: 40px; color: var(--text-3); font-size: 13px; }
+
+  /* filter bar */
+  .filter-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .filter-bar input, .filter-bar select { width: auto; min-width: 160px; }
+
+  .sep-line { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+  .loading { text-align: center; padding: 40px; color: var(--text-3); }
+
+  @media (max-width: 700px) {
+    .sidebar { display: none; }
+    .page { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="title">FEFO Control</div>
+      <div class="sub">WMS paralelo · v1.0</div>
+    </div>
+    <nav class="nav">
+      <div class="nav-item active" onclick="goTo('dashboard')">
+        <span class="nav-icon">◈</span> Dashboard
+      </div>
+      <div class="nav-item" onclick="goTo('recebimento')">
+        <span class="nav-icon">↓</span> Recebimento
+      </div>
+      <div class="nav-item" onclick="goTo('estoque')">
+        <span class="nav-icon">⊞</span> Estoque
+      </div>
+      <div class="nav-item" onclick="goTo('separacao')">
+        <span class="nav-icon">↗</span> Fila FEFO
+      </div>
+      <div class="nav-item" onclick="goTo('movimentos')">
+        <span class="nav-icon">≡</span> Movimentos
+      </div>
+      <div class="nav-item" onclick="goTo('importar')">
+        <span class="nav-icon">⤒</span> Importar / Exportar
+      </div>
+    </nav>
+    <div class="sidebar-footer">rede interna · SQLite</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Dashboard -->
+    <div id="page-dashboard" class="page active">
+      <div class="page-header">
+        <h1>Dashboard</h1>
+        <p>Visão geral do estoque controlado por validade</p>
+      </div>
+      <div class="metrics" id="metrics-grid">
+        <div class="metric"><div class="metric-val" id="m-lotes">—</div><div class="metric-label">Lotes ativos</div></div>
+        <div class="metric"><div class="metric-val" id="m-skus">—</div><div class="metric-label">SKUs distintos</div></div>
+        <div class="metric"><div class="metric-val" id="m-ends">—</div><div class="metric-label">Endereços</div></div>
+        <div class="metric"><div class="metric-val warn" id="m-atencao">—</div><div class="metric-label">Vencem em 30d</div></div>
+        <div class="metric"><div class="metric-val danger" id="m-vencidos">—</div><div class="metric-label">Vencidos</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Lotes críticos — vencimento próximo</div>
+        <div id="criticos-wrap"><div class="loading">Carregando…</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Últimas entradas</div>
+        <div id="ultimas-wrap"><div class="loading">Carregando…</div></div>
+      </div>
+    </div>
+
+    <!-- Recebimento -->
+    <div id="page-recebimento" class="page">
+      <div class="page-header">
+        <h1>Recebimento</h1>
+        <p>Registre lotes e validades no momento da entrada da mercadoria</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Novo lote recebido</div>
+        <div class="form-grid g4">
+          <div class="field"><label>SKU *</label><input type="text" id="r-sku" placeholder="ex: SKU-001"></div>
+          <div class="field"><label>Descrição</label><input type="text" id="r-desc" placeholder="ex: Leite UHT 1L"></div>
+          <div class="field"><label>Nº do Lote *</label><input type="text" id="r-lote" placeholder="ex: LOT-2025-01"></div>
+          <div class="field"><label>Data de validade *</label><input type="date" id="r-validade"></div>
+        </div>
+        <div class="form-grid g4" style="margin-top:12px">
+          <div class="field"><label>Quantidade *</label><input type="number" id="r-qty" placeholder="0" min="0.01" step="0.01"></div>
+          <div class="field"><label>Unidade</label>
+            <select id="r-un"><option>UN</option><option>CX</option><option>KG</option><option>L</option><option>PCT</option><option>FD</option><option>SC</option></select>
+          </div>
+          <div class="field"><label>Endereço WMS *</label><input type="text" id="r-end" placeholder="ex: A-01-01"></div>
+          <div class="field"><label>Fornecedor</label><input type="text" id="r-forn" placeholder="ex: Laticínios SA"></div>
+        </div>
+        <div class="form-actions" style="margin-top:16px">
+          <button class="btn" onclick="limparForm()">Limpar</button>
+          <button class="btn btn-primary" onclick="registrarLote()">↓ Registrar recebimento</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Estoque -->
+    <div id="page-estoque" class="page">
+      <div class="page-header">
+        <h1>Estoque por endereço</h1>
+        <p>Todos os lotes cadastrados ordenados por validade (FEFO)</p>
+      </div>
+      <div class="filter-bar">
+        <input type="text" id="f-sku" placeholder="Buscar SKU, descrição ou endereço…" oninput="carregarEstoque()" style="flex:1; min-width:200px;">
+        <select id="f-status" onchange="carregarEstoque()">
+          <option value="">Todos os status</option>
+          <option value="vencido">Vencidos</option>
+          <option value="critico">Crítico (≤7d)</option>
+          <option value="atencao">Atenção (≤30d)</option>
+          <option value="ok">OK</option>
+        </select>
+        <button class="btn btn-sm" onclick="carregarEstoque()">↺ Atualizar</button>
+      </div>
+      <div class="card" style="padding:0; overflow:hidden;">
+        <div class="table-wrap" id="estoque-wrap"><div class="loading">Carregando…</div></div>
+      </div>
+    </div>
+
+    <!-- Separação FEFO -->
+    <div id="page-separacao" class="page">
+      <div class="page-header">
+        <h1>Fila de separação FEFO</h1>
+        <p>Consulte a ordem de separação para garantir que os lotes mais próximos do vencimento saiam primeiro</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Consultar produto</div>
+        <div class="form-grid g3">
+          <div class="field">
+            <label>SKU / Produto *</label>
+            <select id="s-sku">
+              <option value="">— selecione —</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Quantidade necessária</label>
+            <input type="number" id="s-qty" placeholder="deixe 0 para ver todos os lotes" min="0" step="1">
+          </div>
+          <div class="field" style="display:flex; align-items:flex-end;">
+            <button class="btn btn-primary" style="width:100%" onclick="gerarFEFO()">↗ Gerar fila FEFO</button>
+          </div>
+        </div>
+      </div>
+      <div id="fefo-result"></div>
+    </div>
+
+    <!-- Movimentos -->
+    <div id="page-movimentos" class="page">
+      <div class="page-header">
+        <h1>Histórico de movimentos</h1>
+        <p>Entradas, saídas e ajustes registrados no sistema</p>
+      </div>
+      <div class="card" style="padding:0; overflow:hidden;">
+        <div class="table-wrap" id="mov-wrap"><div class="loading">Carregando…</div></div>
+      </div>
+    </div>
+
+    <!-- Importar -->
+    <div id="page-importar" class="page">
+      <div class="page-header">
+        <h1>Importar / Exportar</h1>
+        <p>Importe relatórios do WMS ou exporte o estoque atual</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Importar CSV do WMS</div>
+        <p style="font-size:12px; color:var(--text-2); margin-bottom:12px;">
+          Colunas obrigatórias: <code style="font-family:var(--mono); background:var(--bg); padding:1px 5px; border-radius:4px">sku, lote, validade (YYYY-MM-DD), quantidade, endereco</code><br>
+          Opcionais: <code style="font-family:var(--mono); background:var(--bg); padding:1px 5px; border-radius:4px">descricao, unidade, fornecedor</code>
+        </p>
+        <div class="drop-area" onclick="document.getElementById('csv-file').click()">
+          <div style="font-size:32px; margin-bottom:8px;">⤒</div>
+          Clique para selecionar o arquivo CSV exportado do WMS
+          <input type="file" id="csv-file" accept=".csv,.txt" onchange="lerCSV(event)">
+        </div>
+        <hr class="sep-line">
+        <div style="font-size:12px; color:var(--text-2); margin-bottom:8px;">Ou cole o conteúdo CSV diretamente:</div>
+        <textarea id="csv-paste" rows="6" placeholder="sku,descricao,lote,validade,quantidade,unidade,endereco,fornecedor&#10;SKU-001,Produto A,LOT-001,2025-12-31,100,UN,A-01-01,Fornec SA"></textarea>
+        <div class="form-actions" style="margin-top:8px">
+          <button class="btn btn-primary" onclick="importarPaste()">⤒ Importar texto colado</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Exportar estoque atual</div>
+        <p style="font-size:12px; color:var(--text-2); margin-bottom:12px;">Baixe o estoque completo em CSV para conferência ou backup.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <a href="/api/exportar" class="btn">⤓ Exportar CSV completo</a>
+          <button class="btn" onclick="baixarModelo()">⤓ Baixar modelo CSV</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Modal movimentação -->
+<div class="modal-bg" id="modal-mov">
+  <div class="modal">
+    <h2 id="modal-title">Registrar movimentação</h2>
+    <input type="hidden" id="mov-lote-id">
+    <div class="form-grid g2">
+      <div class="field"><label>Tipo</label>
+        <select id="mov-tipo">
+          <option value="SAIDA">Saída (separação)</option>
+          <option value="ENTRADA">Entrada adicional</option>
+          <option value="AJUSTE">Ajuste de inventário</option>
+        </select>
+      </div>
+      <div class="field"><label>Quantidade</label><input type="number" id="mov-qty" min="0.01" step="0.01" placeholder="0"></div>
+    </div>
+    <div class="field" style="margin-top:12px"><label>Usuário / responsável</label><input type="text" id="mov-user" placeholder="seu nome"></div>
+    <div class="field" style="margin-top:12px"><label>Observação</label><input type="text" id="mov-obs" placeholder="ex: pedido #1234"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarMov()">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = '';
+
+// ── navegação ──────────────────────────────────────────────────────
+function goTo(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => {
+    if(n.getAttribute('onclick')?.includes(page)) n.classList.add('active');
+  });
+  if(page === 'dashboard') carregarDashboard();
+  if(page === 'estoque') carregarEstoque();
+  if(page === 'separacao') carregarSkus();
+  if(page === 'movimentos') carregarMovimentos();
+}
+
+// ── toast ──────────────────────────────────────────────────────────
+function toast(msg, tipo='ok') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = tipo;
+  t.style.display = 'block';
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.style.display = 'none', 3500);
+}
+
+// ── api ────────────────────────────────────────────────────────────
+async function api(path, opts={}) {
+  const r = await fetch(API + path, {
+    headers: {'Content-Type': 'application/json'},
+    ...opts
+  });
+  if(!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.detail || 'Erro na requisição');
+  }
+  return r.json();
+}
+
+// ── badges ─────────────────────────────────────────────────────────
+function badge(status, dias) {
+  if(status === 'vencido') return `<span class="badge badge-danger">Vencido (${Math.abs(dias)}d)</span>`;
+  if(status === 'critico') return `<span class="badge badge-danger">Crítico: ${dias}d</span>`;
+  if(status === 'atencao') return `<span class="badge badge-warn">Atenção: ${dias}d</span>`;
+  return `<span class="badge badge-ok">OK: ${dias}d</span>`;
+}
+
+// ── dashboard ──────────────────────────────────────────────────────
+async function carregarDashboard() {
+  try {
+    const [m, criticos, ultimas] = await Promise.all([
+      api('/api/metricas'),
+      api('/api/lotes?status=atencao'),
+      api('/api/lotes')
+    ]);
+    document.getElementById('m-lotes').textContent = m.total_lotes;
+    document.getElementById('m-skus').textContent = m.total_skus;
+    document.getElementById('m-ends').textContent = m.total_enderecos;
+    document.getElementById('m-atencao').textContent = m.atencao;
+    document.getElementById('m-vencidos').textContent = m.vencidos;
+
+    const crit = [...(await api('/api/lotes?status=critico')), ...(await api('/api/lotes?status=vencido'))].slice(0,8);
+    renderTabelaSimples('criticos-wrap', crit, true);
+
+    const ult = [...ultimas].sort((a,b) => b.id - a.id).slice(0,8);
+    renderTabelaSimples('ultimas-wrap', ult, false);
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+function renderTabelaSimples(id, dados, moverBtn) {
+  const wrap = document.getElementById(id);
+  if(!dados.length) { wrap.innerHTML = '<div class="empty">Nenhum registro.</div>'; return; }
+  wrap.innerHTML = `<table>
+    <thead><tr><th>SKU</th><th>Descrição</th><th>Lote</th><th>Validade</th><th>Endereço</th><th>Qtd</th><th>Status</th>${moverBtn?'<th></th>':''}</tr></thead>
+    <tbody>${dados.map(l => `<tr>
+      <td><strong>${l.sku}</strong></td>
+      <td style="color:var(--text-2)">${l.descricao||'—'}</td>
+      <td><span class="mono-tag">${l.lote}</span></td>
+      <td style="font-family:var(--mono); font-size:12px">${l.validade}</td>
+      <td><span class="mono-tag">${l.endereco}</span></td>
+      <td>${l.quantidade} ${l.unidade}</td>
+      <td>${badge(l.status, l.dias_validade)}</td>
+      ${moverBtn?`<td><button class="btn btn-sm" onclick="abrirMov(${l.id},'${l.sku}','${l.lote}')">Movimentar</button></td>`:''}
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+// ── recebimento ────────────────────────────────────────────────────
+async function registrarLote() {
+  const get = id => document.getElementById(id).value.trim();
+  const sku = get('r-sku'), desc = get('r-desc'), lote = get('r-lote'),
+        val = get('r-validade'), qty = parseFloat(get('r-qty')),
+        un = get('r-un'), end = get('r-end'), forn = get('r-forn');
+  if(!sku||!lote||!val||!qty||!end) { toast('Preencha os campos obrigatórios (SKU, Lote, Validade, Quantidade, Endereço)', 'err'); return; }
+  try {
+    await api('/api/lotes', { method:'POST', body: JSON.stringify({sku,descricao:desc,lote,validade:val,quantidade:qty,unidade:un,endereco:end,fornecedor:forn}) });
+    toast(`Lote ${lote.toUpperCase()} registrado com sucesso`);
+    limparForm();
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+function limparForm() {
+  ['r-sku','r-desc','r-lote','r-validade','r-qty','r-end','r-forn'].forEach(id => document.getElementById(id).value = '');
+}
+
+// ── estoque ────────────────────────────────────────────────────────
+async function carregarEstoque() {
+  const sku = document.getElementById('f-sku')?.value || '';
+  const status = document.getElementById('f-status')?.value || '';
+  const wrap = document.getElementById('estoque-wrap');
+  wrap.innerHTML = '<div class="loading">Carregando…</div>';
+  try {
+    let url = `/api/lotes?sku=${encodeURIComponent(sku)}`;
+    if(status) url += `&status=${status}`;
+    const dados = await api(url);
+    if(!dados.length) { wrap.innerHTML = '<div class="empty">Nenhum lote encontrado.</div>'; return; }
+    wrap.innerHTML = `<table>
+      <thead><tr><th>Endereço</th><th>SKU</th><th>Descrição</th><th>Lote</th><th>Validade</th><th>Dias</th><th>Qtd</th><th>Un</th><th>Status</th><th></th></tr></thead>
+      <tbody>${dados.map(l => `<tr>
+        <td><span class="mono-tag">${l.endereco}</span></td>
+        <td><strong>${l.sku}</strong></td>
+        <td style="color:var(--text-2); font-size:12px">${l.descricao||'—'}</td>
+        <td><span class="mono-tag">${l.lote}</span></td>
+        <td style="font-family:var(--mono); font-size:12px">${l.validade}</td>
+        <td style="font-family:var(--mono); font-weight:500; color:${l.dias_validade<0?'var(--danger)':l.dias_validade<=30?'var(--warn)':'var(--text-2)'}">${l.dias_validade}</td>
+        <td style="font-family:var(--mono)">${l.quantidade}</td>
+        <td style="color:var(--text-3)">${l.unidade}</td>
+        <td>${badge(l.status, l.dias_validade)}</td>
+        <td style="display:flex; gap:4px; padding:6px 10px">
+          <button class="btn btn-sm" onclick="abrirMov(${l.id},'${l.sku}','${l.lote}')">Mov.</button>
+          <button class="btn btn-sm btn-danger" onclick="remover(${l.id})">✕</button>
+        </td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } catch(e) { toast(e.message,'err'); }
+}
+
+async function remover(id) {
+  if(!confirm('Remover este lote do estoque?')) return;
+  try {
+    await api(`/api/lotes/${id}`, {method:'DELETE'});
+    toast('Lote removido'); carregarEstoque();
+  } catch(e) { toast(e.message,'err'); }
+}
+
+// ── fefo ───────────────────────────────────────────────────────────
+async function carregarSkus() {
+  try {
+    const skus = await api('/api/skus');
+    const sel = document.getElementById('s-sku');
+    sel.innerHTML = '<option value="">— selecione —</option>' +
+      skus.map(s => `<option value="${s.sku}">${s.sku}${s.descricao?' — '+s.descricao:''} (${s.total} ${s.unidade})</option>`).join('');
+  } catch(e) {}
+}
+
+async function gerarFEFO() {
+  const sku = document.getElementById('s-sku').value;
+  const qty = parseFloat(document.getElementById('s-qty').value) || 0;
+  const res = document.getElementById('fefo-result');
+  if(!sku) { toast('Selecione um produto', 'err'); return; }
+  res.innerHTML = '<div class="loading">Calculando fila FEFO…</div>';
+  try {
+    const data = await api(`/api/fefo?sku=${sku}&quantidade=${qty}`);
+    let html = `<div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <div>
+          <div style="font-size:15px; font-weight:600">${data.sku}${data.descricao?' — '+data.descricao:''}</div>
+          <div style="font-size:12px; color:var(--text-2); margin-top:2px">${data.lotes.length} lote(s) · ${data.total_disponivel} disponíveis no estoque</div>
+        </div>
+        ${qty > 0 ? `<span class="badge ${data.cobertura_ok?'badge-ok':'badge-danger'}">${data.cobertura_ok?'Cobertura completa':'Estoque insuficiente'}</span>` : ''}
+      </div>`;
+
+    data.lotes.forEach((l,i) => {
+      const rankClass = i===0?'rank-1':i===1?'rank-2':'rank-n';
+      html += `<div class="fefo-card ${rankClass}">
+        <div class="fefo-header ${rankClass}">
+          <div class="rank-num">${i+1}</div>
+          <div style="flex:1; font-size:12px; color:var(--text-2)">Separar este lote primeiro</div>
+          ${badge(l.status, l.dias_validade)}
+        </div>
+        <div class="fefo-body">
+          <div class="fefo-info">
+            <div class="fefo-lote">${l.lote}</div>
+            <div class="fefo-detail">Validade: ${l.validade} · ${l.dias_validade >= 0 ? `vence em ${l.dias_validade} dias` : `<span style="color:var(--danger)">VENCIDO há ${Math.abs(l.dias_validade)} dias</span>`}</div>
+            <div class="fefo-detail" style="margin-top:4px">Endereço: <span class="mono-tag">${l.endereco}</span> · Disponível: ${l.quantidade} ${l.unidade}</div>
+          </div>
+          ${l.separar > 0 ? `<div class="fefo-sep">
+            <div class="fefo-sep-qty">${l.separar} ${l.unidade}</div>
+            <div class="fefo-sep-label">a separar</div>
+          </div>` : ''}
+          <button class="btn btn-sm" onclick="abrirMov(${l.id},'${l.sku}','${l.lote}')">Registrar saída</button>
+        </div>
+      </div>`;
+    });
+
+    if(qty > 0 && !data.cobertura_ok) {
+      html += `<div style="padding:12px; background:var(--danger-bg); border-radius:var(--radius); color:var(--danger); font-size:13px; margin-top:8px">
+        ⚠ Estoque insuficiente: faltam ${data.falta} ${data.lotes[0]?.unidade||''} para completar o pedido.
+      </div>`;
+    }
+    html += '</div>';
+    res.innerHTML = html;
+  } catch(e) { res.innerHTML = `<div class="card"><div class="empty">${e.message}</div></div>`; }
+}
+
+// ── movimentos ─────────────────────────────────────────────────────
+async function carregarMovimentos() {
+  const wrap = document.getElementById('mov-wrap');
+  try {
+    const dados = await api('/api/movimentos?limit=100');
+    if(!dados.length) { wrap.innerHTML = '<div class="empty">Nenhum movimento registrado.</div>'; return; }
+    wrap.innerHTML = `<table>
+      <thead><tr><th>Data/hora</th><th>SKU</th><th>Lote</th><th>Endereço</th><th>Tipo</th><th>Qtd</th><th>Usuário</th><th>Obs</th></tr></thead>
+      <tbody>${dados.map(m => `<tr>
+        <td style="font-family:var(--mono); font-size:12px; color:var(--text-2)">${m.data_mov?.slice(0,16).replace('T',' ')}</td>
+        <td><strong>${m.sku}</strong></td>
+        <td><span class="mono-tag">${m.num_lote}</span></td>
+        <td><span class="mono-tag">${m.endereco}</span></td>
+        <td><span class="badge ${m.tipo==='ENTRADA'?'badge-ok':m.tipo==='SAIDA'?'badge-info':'badge-warn'}">${m.tipo}</span></td>
+        <td style="font-family:var(--mono)">${m.quantidade}</td>
+        <td style="color:var(--text-2)">${m.usuario||'—'}</td>
+        <td style="color:var(--text-2); font-size:12px">${m.obs||'—'}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } catch(e) { toast(e.message,'err'); }
+}
+
+// ── modal movimentação ─────────────────────────────────────────────
+function abrirMov(id, sku, lote) {
+  document.getElementById('mov-lote-id').value = id;
+  document.getElementById('modal-title').textContent = `Movimentar — ${sku} · ${lote}`;
+  document.getElementById('mov-qty').value = '';
+  document.getElementById('mov-obs').value = '';
+  document.getElementById('modal-mov').classList.add('open');
+}
+function fecharModal() { document.getElementById('modal-mov').classList.remove('open'); }
+
+async function confirmarMov() {
+  const id = document.getElementById('mov-lote-id').value;
+  const tipo = document.getElementById('mov-tipo').value;
+  const qty = parseFloat(document.getElementById('mov-qty').value);
+  const user = document.getElementById('mov-user').value || 'operador';
+  const obs = document.getElementById('mov-obs').value;
+  if(!qty || qty <= 0) { toast('Informe uma quantidade válida','err'); return; }
+  try {
+    await api(`/api/lotes/${id}/movimentos`, {method:'POST', body: JSON.stringify({tipo,quantidade:qty,usuario:user,obs})});
+    toast(`${tipo} de ${qty} registrado com sucesso`);
+    fecharModal();
+    carregarEstoque();
+  } catch(e) { toast(e.message,'err'); }
+}
+
+// ── importar ───────────────────────────────────────────────────────
+function lerCSV(e) {
+  const f = e.target.files[0];
+  if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => processarCSVTexto(ev.target.result);
+  reader.readAsText(f, 'UTF-8');
+}
+function importarPaste() { processarCSVTexto(document.getElementById('csv-paste').value); }
+
+async function processarCSVTexto(txt) {
+  const lines = txt.trim().split('\n').filter(l => l.trim());
+  if(lines.length < 2) { toast('CSV vazio ou sem dados','err'); return; }
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g,''));
+  const linhas = [];
+  for(let i=1;i<lines.length;i++) {
+    const vals = lines[i].split(',').map(v => v.trim().replace(/^["']|["']$/g,''));
+    const obj = {};
+    headers.forEach((h,j) => obj[h] = vals[j]||'');
+    linhas.push(obj);
+  }
+  try {
+    const r = await api('/api/importar', {method:'POST', body: JSON.stringify({linhas})});
+    toast(`${r.importados} lote(s) importado(s)${r.erros.length?' · '+r.erros.length+' ignorado(s)':''}`);
+    if(r.erros.length) console.warn('Erros na importação:', r.erros);
+  } catch(e) { toast(e.message,'err'); }
+}
+
+function baixarModelo() {
+  const csv = 'sku,descricao,lote,validade,quantidade,unidade,endereco,fornecedor\nSKU-001,Produto Exemplo,LOT-2025-01,2025-12-31,100,UN,A-01-01,Fornecedor SA\nSKU-002,Outro Produto,LOT-2025-02,2025-08-15,50,CX,B-02-03,Distribuidora LTDA';
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'modelo_fefo.csv'; a.click();
+}
+
+// fechar modal clicando fora
+document.getElementById('modal-mov').addEventListener('click', function(e) {
+  if(e.target === this) fecharModal();
+});
+
+// init
+carregarDashboard();
+</script>
+</body>
+</html>
