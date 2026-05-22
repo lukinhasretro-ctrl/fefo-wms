@@ -632,18 +632,23 @@ function importarPaste() { processarCSVTexto(document.getElementById('csv-paste'
 async function processarCSVTexto(txt) {
   const lines = txt.trim().split('\n').filter(l => l.trim());
   if(lines.length < 2) { toast('CSV vazio ou sem dados','err'); return; }
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g,''));
+  // detecta separador: TAB tem prioridade, depois ponto-e-vírgula, depois vírgula
+  const sep = lines[0].includes('\t') ? '\t' : lines[0].includes(';') ? ';' : ',';
+  const headers = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/['"]/g,''));
   const linhas = [];
   for(let i=1;i<lines.length;i++) {
-    const vals = lines[i].split(',').map(v => v.trim().replace(/^["']|["']$/g,''));
+    const vals = lines[i].split(sep).map(v => v.trim().replace(/^["']|["']$/g,''));
     const obj = {};
     headers.forEach((h,j) => obj[h] = vals[j]||'');
     linhas.push(obj);
   }
   try {
     const r = await api('/api/importar', {method:'POST', body: JSON.stringify({linhas})});
-    toast(`${r.importados} lote(s) importado(s)${r.erros.length?' · '+r.erros.length+' ignorado(s)':''}`);
     if(r.erros.length) console.warn('Erros na importação:', r.erros);
+    const msg = r.importados > 0
+      ? `${r.importados} lote(s) importado(s)${r.erros.length?' · '+r.erros.length+' ignorado(s)':''}`
+      : `Nenhum lote importado. Erros: ${r.erros.slice(0,3).join(' | ')}`;
+    toast(msg, r.importados > 0 ? 'ok' : 'err');
   } catch(e) { toast(e.message,'err'); }
 }
 
