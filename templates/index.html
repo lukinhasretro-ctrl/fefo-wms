@@ -259,6 +259,7 @@
           <option value="ok">OK</option>
         </select>
         <button class="btn btn-sm" onclick="carregarEstoque()">↺ Atualizar</button>
+        <button class="btn btn-sm btn-danger" onclick="abrirBaixaLote()" id="btn-baixa-lote" style="display:none">⬇ Baixar vencidos em lote</button>
       </div>
       <div class="card" style="padding:0; overflow:hidden;">
         <div class="table-wrap" id="estoque-wrap"><div class="loading">Carregando…</div></div>
@@ -339,6 +340,23 @@
     </div>
 
   </main>
+</div>
+
+<!-- Modal baixa em lote -->
+<div class="modal-bg" id="modal-baixa">
+  <div class="modal">
+    <h2>Baixar vencidos em lote</h2>
+    <div id="baixa-msg" style="font-size:13px; color:var(--text-2); margin-bottom:16px; padding:10px 14px; background:var(--danger-bg); border-radius:var(--border-radius-md); color:var(--danger)"></div>
+    <input type="hidden" id="baixa-ids">
+    <div class="form-grid g2">
+      <div class="field"><label>Responsável</label><input type="text" id="baixa-user" placeholder="seu nome"></div>
+      <div class="field"><label>Motivo</label><input type="text" id="baixa-obs" placeholder="ex: Descarte por vencimento"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="fecharModalBaixa()">Cancelar</button>
+      <button class="btn btn-primary" style="background:var(--danger); border-color:var(--danger)" onclick="confirmarBaixa()">Confirmar baixa</button>
+    </div>
+  </div>
 </div>
 
 <!-- Modal movimentação -->
@@ -513,10 +531,14 @@ async function carregarEstoque() {
     let url = `/api/lotes?sku=${encodeURIComponent(sku)}`;
     if(status) url += `&status=${status}`;
     const dados = await api(url);
+    // mostra botão de baixa em lote se filtro for "vencido"
+    const btnBaixa = document.getElementById('btn-baixa-lote');
+    if(btnBaixa) btnBaixa.style.display = (status === 'vencido' && dados.length > 0) ? 'inline-block' : 'none';
     if(!dados.length) { wrap.innerHTML = '<div class="empty">Nenhum lote encontrado.</div>'; return; }
     wrap.innerHTML = `<table>
-      <thead><tr><th>Endereço</th><th>SKU</th><th>Descrição</th><th>Lote</th><th>Validade</th><th>Dias</th><th>Qtd</th><th>Un</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th><input type="checkbox" id="chk-all" onclick="toggleTodos(this)" title="Selecionar todos"></th><th>Endereço</th><th>SKU</th><th>Descrição</th><th>Lote</th><th>Validade</th><th>Dias</th><th>Qtd</th><th>Un</th><th>Status</th><th></th></tr></thead>
       <tbody>${dados.map(l => `<tr>
+        <td><input type="checkbox" class="chk-lote" value="${l.id}"></td>
         <td><span class="mono-tag">${l.endereco}</span></td>
         <td><strong>${l.sku}</strong></td>
         <td style="color:var(--text-2); font-size:12px">${l.descricao||'—'}</td>
@@ -706,6 +728,43 @@ function baixarModelo() {
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
   a.download = 'modelo_fefo.csv'; a.click();
+}
+
+// ── baixa em lote ──────────────────────────────────────────────────
+function toggleTodos(chk) {
+  document.querySelectorAll('.chk-lote').forEach(c => c.checked = chk.checked);
+}
+
+function abrirBaixaLote() {
+  const selecionados = [...document.querySelectorAll('.chk-lote:checked')].map(c => c.value);
+  const total = document.querySelectorAll('.chk-lote').length;
+  const msg = selecionados.length > 0
+    ? `${selecionados.length} lote(s) selecionado(s) serão baixados.`
+    : `Todos os ${total} lote(s) vencidos serão baixados.`;
+  document.getElementById('baixa-msg').textContent = msg;
+  document.getElementById('baixa-ids').value = selecionados.join(',');
+  document.getElementById('modal-baixa').classList.add('open');
+}
+
+async function confirmarBaixa() {
+  const usuario = document.getElementById('baixa-user').value || 'operador';
+  const obs = document.getElementById('baixa-obs').value || 'Baixa de vencidos em lote';
+  const idsRaw = document.getElementById('baixa-ids').value;
+  const ids = idsRaw ? idsRaw.split(',').map(Number) : [];
+  try {
+    const r = await api('/api/lotes/baixa-vencidos', {
+      method: 'POST',
+      body: JSON.stringify({usuario, obs, ids})
+    });
+    toast(r.msg);
+    fecharModalBaixa();
+    carregarEstoque();
+    carregarDashboard();
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+function fecharModalBaixa() {
+  document.getElementById('modal-baixa').classList.remove('open');
 }
 
 // fechar modal clicando fora
