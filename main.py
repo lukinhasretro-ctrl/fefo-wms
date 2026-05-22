@@ -7,19 +7,15 @@ import os, csv, io
 from datetime import date, datetime
 from contextlib import contextmanager
 
-# ── banco ──────────────────────────────────────────────────────────
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 if DATABASE_URL:
-    import psycopg2
-    import psycopg2.extras
+    import psycopg
+    from psycopg.rows import dict_row
     def get_conn():
-        url = DATABASE_URL
-        if url.startswith("postgres://"):
-            url = url.replace("postgres://", "postgresql://", 1)
-        return psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
-    PH = "%s"   # placeholder PostgreSQL
-    RETURNING = "RETURNING id"
+        url = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        return psycopg.connect(url, row_factory=dict_row)
+    PH = "%s"
 else:
     import sqlite3
     def get_conn():
@@ -27,7 +23,6 @@ else:
         con.row_factory = sqlite3.Row
         return con
     PH = "?"
-    RETURNING = ""
 
 @contextmanager
 def get_db():
@@ -98,7 +93,6 @@ def init_db():
 app = FastAPI(title="FEFO WMS Controller")
 init_db()
 
-# ── modelos ────────────────────────────────────────────────────────
 class LoteIn(BaseModel):
     sku:        str
     descricao:  Optional[str] = ""
@@ -122,7 +116,6 @@ class LoteUpdate(BaseModel):
     endereco:   Optional[str] = None
     fornecedor: Optional[str] = None
 
-# ── helpers ────────────────────────────────────────────────────────
 def dias_ate_vencer(validade: str) -> int:
     try:
         v = datetime.strptime(str(validade)[:10], "%Y-%m-%d").date()
@@ -139,18 +132,10 @@ def row_to_dict(row) -> dict:
         "atencao"  if d["dias_validade"] <= 30 else
         "ok"
     )
-    # garantir serializável
     for k, v in d.items():
         if hasattr(v, 'isoformat'):
             d[k] = str(v)
     return d
-
-def fetchall(cur) -> list:
-    return [row_to_dict(r) for r in cur.fetchall()]
-
-def fetchone(cur):
-    r = cur.fetchone()
-    return row_to_dict(r) if r else None
 
 def normalizar_data(val: str) -> str:
     val = str(val).strip()
@@ -161,7 +146,9 @@ def normalizar_data(val: str) -> str:
             pass
     raise ValueError(f"Data inválida: {val}")
 
-# ── rotas ──────────────────────────────────────────────────────────
+def like_op():
+    return "ILIKE" if DATABASE_URL else "LIKE"
+
 @app.get("/", response_class=HTMLResponse)
 def root():
     return FileResponse("templates/index.html")
@@ -170,17 +157,17 @@ def root():
 def listar_lotes(sku: str = "", endereco: str = "", status: str = ""):
     with get_db() as con:
         cur = con.cursor()
-        q = f"SELECT * FROM lotes WHERE ativo=1"
+        q = "SELECT * FROM lotes WHERE ativo=1"
         params = []
         if sku:
-            q += f" AND (sku ILIKE {PH} OR descricao ILIKE {PH})" if DATABASE_URL else f" AND (sku LIKE {PH} OR descricao LIKE {PH})"
+            q += f" AND (sku {like_op()} {PH} OR descricao {like_op()} {PH})"
             params += [f"%{sku}%", f"%{sku}%"]
         if endereco:
-            q += f" AND endereco ILIKE {PH}" if DATABASE_URL else f" AND endereco LIKE {PH}"
+            q += f" AND endereco {like_op()} {PH}"
             params.append(f"%{endereco}%")
         q += " ORDER BY validade ASC"
         cur.execute(q, params)
-        dados = fetchall(cur)
+        dados = [row_to_dict(r) for r in cur.fetchall()]
     if status:
         dados = [d for d in dados if d["status"] == status]
     return dados
@@ -205,20 +192,15 @@ def criar_lote(lote: LoteIn):
                   lote.validade, lote.quantidade, lote.unidade,
                   lote.endereco.upper(), lote.fornecedor))
             lote_id = cur.lastrowid
-        cur.execute(f"""
-            INSERT INTO movimentos (lote_id,tipo,quantidade,usuario,obs)
-            VALUES ({PH},{PH},{PH},{PH},{PH})
-        """, (lote_id, "ENTRADA", lote.quantidade, "recebimento", f"Recebimento inicial - {lote.fornecedor}"))
+        cur.execute(f"INSERT INTO movimentos (lote_id,tipo,quantidade,usuario,obs) VALUES ({PH},{PH},{PH},{PH},{PH})",
+                    (lote_id, "ENTRADA", lote.quantidade, "recebimento", f"Recebimento - {lote.fornecedor}"))
         cur.execute(f"SELECT * FROM lotes WHERE id={PH}", (lote_id,))
-        return fetchone(cur)
+        return row_to_dict(cur.fetchone())
 
 @app.patch("/api/lotes/{lote_id}")
 def atualizar_lote(lote_id: int, upd: LoteUpdate):
     with get_db() as con:
         cur = con.cursor()
-        cur.execute(f"SELECT * FROM lotes WHERE id={PH} AND ativo=1", (lote_id,))
-        if not cur.fetchone():
-            raise HTTPException(404, "Lote não encontrado")
         fields, vals = [], []
         for k, v in upd.dict(exclude_none=True).items():
             fields.append(f"{k}={PH}")
@@ -226,13 +208,15 @@ def atualizar_lote(lote_id: int, upd: LoteUpdate):
         if fields:
             cur.execute(f"UPDATE lotes SET {','.join(fields)} WHERE id={PH}", vals + [lote_id])
         cur.execute(f"SELECT * FROM lotes WHERE id={PH}", (lote_id,))
-        return fetchone(cur)
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Lote não encontrado")
+        return row_to_dict(row)
 
 @app.delete("/api/lotes/{lote_id}")
 def remover_lote(lote_id: int):
     with get_db() as con:
-        cur = con.cursor()
-        cur.execute(f"UPDATE lotes SET ativo=0 WHERE id={PH}", (lote_id,))
+        con.cursor().execute(f"UPDATE lotes SET ativo=0 WHERE id={PH}", (lote_id,))
     return {"ok": True}
 
 @app.post("/api/lotes/{lote_id}/movimentos")
@@ -243,37 +227,30 @@ def registrar_movimento(lote_id: int, mov: MovimentoIn):
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Lote não encontrado")
-        row = dict(row)
         nova_qty = float(row["quantidade"])
         if mov.tipo == "SAIDA":
             if mov.quantidade > nova_qty:
-                raise HTTPException(400, f"Quantidade insuficiente. Disponível: {nova_qty}")
+                raise HTTPException(400, f"Insuficiente. Disponível: {nova_qty}")
             nova_qty -= mov.quantidade
         elif mov.tipo == "ENTRADA":
             nova_qty += mov.quantidade
         elif mov.tipo == "AJUSTE":
             nova_qty = mov.quantidade
         cur.execute(f"UPDATE lotes SET quantidade={PH} WHERE id={PH}", (nova_qty, lote_id))
-        cur.execute(f"""
-            INSERT INTO movimentos (lote_id,tipo,quantidade,usuario,obs)
-            VALUES ({PH},{PH},{PH},{PH},{PH})
-        """, (lote_id, mov.tipo, mov.quantidade, mov.usuario, mov.obs))
+        cur.execute(f"INSERT INTO movimentos (lote_id,tipo,quantidade,usuario,obs) VALUES ({PH},{PH},{PH},{PH},{PH})",
+                    (lote_id, mov.tipo, mov.quantidade, mov.usuario, mov.obs))
         cur.execute(f"SELECT * FROM lotes WHERE id={PH}", (lote_id,))
-        return fetchone(cur)
+        return row_to_dict(cur.fetchone())
 
 @app.get("/api/fefo")
 def consultar_fefo(sku: str, quantidade: float = 0):
     with get_db() as con:
         cur = con.cursor()
-        op = "ILIKE" if DATABASE_URL else "LIKE"
-        cur.execute(f"""
-            SELECT * FROM lotes
-            WHERE sku {op} {PH} AND ativo=1 AND quantidade>0
-            ORDER BY validade ASC
-        """, (sku.upper(),))
-        dados = fetchall(cur)
+        cur.execute(f"SELECT * FROM lotes WHERE sku {like_op()} {PH} AND ativo=1 AND quantidade>0 ORDER BY validade ASC",
+                    (sku.upper(),))
+        dados = [row_to_dict(r) for r in cur.fetchall()]
     if not dados:
-        raise HTTPException(404, "Nenhum lote disponível para este SKU")
+        raise HTTPException(404, "Nenhum lote disponível")
     restante = quantidade
     for d in dados:
         if restante > 0:
@@ -281,26 +258,17 @@ def consultar_fefo(sku: str, quantidade: float = 0):
             restante -= d["separar"]
         else:
             d["separar"] = 0
-    return {
-        "sku": sku.upper(),
-        "descricao": dados[0].get("descricao",""),
-        "total_disponivel": sum(float(d["quantidade"]) for d in dados),
-        "quantidade_solicitada": quantidade,
-        "cobertura_ok": restante <= 0,
-        "falta": max(0, restante),
-        "lotes": dados
-    }
+    return {"sku": sku.upper(), "descricao": dados[0].get("descricao",""),
+            "total_disponivel": sum(float(d["quantidade"]) for d in dados),
+            "quantidade_solicitada": quantidade, "cobertura_ok": restante <= 0,
+            "falta": max(0, restante), "lotes": dados}
 
 @app.get("/api/skus/{sku_code}")
 def buscar_sku(sku_code: str):
     with get_db() as con:
         cur = con.cursor()
-        op = "ILIKE" if DATABASE_URL else "LIKE"
-        cur.execute(f"""
-            SELECT sku, descricao, unidade, fornecedor
-            FROM lotes WHERE sku {op} {PH} AND ativo=1
-            ORDER BY id DESC LIMIT 1
-        """, (sku_code.upper(),))
+        cur.execute(f"SELECT sku,descricao,unidade,fornecedor FROM lotes WHERE sku {like_op()} {PH} AND ativo=1 ORDER BY id DESC LIMIT 1",
+                    (sku_code.upper(),))
         row = cur.fetchone()
     if not row:
         raise HTTPException(404, "SKU não encontrado")
@@ -310,13 +278,7 @@ def buscar_sku(sku_code: str):
 def listar_skus():
     with get_db() as con:
         cur = con.cursor()
-        cur.execute("""
-            SELECT sku, descricao, unidade,
-                   SUM(quantidade) as total,
-                   MIN(validade) as proxima_validade,
-                   COUNT(*) as num_lotes
-            FROM lotes WHERE ativo=1 GROUP BY sku, descricao, unidade ORDER BY sku
-        """)
+        cur.execute("SELECT sku,descricao,unidade,SUM(quantidade) as total,MIN(validade) as proxima_validade,COUNT(*) as num_lotes FROM lotes WHERE ativo=1 GROUP BY sku,descricao,unidade ORDER BY sku")
         return [dict(r) for r in cur.fetchall()]
 
 @app.get("/api/metricas")
@@ -330,25 +292,17 @@ def metricas():
         rows = cur.fetchall()
     vencidos = sum(1 for r in rows if dias_ate_vencer(dict(r)["validade"]) < 0)
     atencao  = sum(1 for r in rows if 0 <= dias_ate_vencer(dict(r)["validade"]) <= 30)
-    return {"total_lotes": total, "total_enderecos": ends,
-            "total_skus": skus, "vencidos": vencidos, "atencao": atencao}
+    return {"total_lotes": total, "total_enderecos": ends, "total_skus": skus,
+            "vencidos": vencidos, "atencao": atencao}
 
 @app.get("/api/movimentos")
 def listar_movimentos(lote_id: Optional[int] = None, limit: int = 50):
     with get_db() as con:
         cur = con.cursor()
         if lote_id:
-            cur.execute(f"""
-                SELECT m.*, l.sku, l.lote as num_lote, l.endereco
-                FROM movimentos m JOIN lotes l ON m.lote_id=l.id
-                WHERE m.lote_id={PH} ORDER BY m.data_mov DESC LIMIT {PH}
-            """, (lote_id, limit))
+            cur.execute(f"SELECT m.*,l.sku,l.lote as num_lote,l.endereco FROM movimentos m JOIN lotes l ON m.lote_id=l.id WHERE m.lote_id={PH} ORDER BY m.data_mov DESC LIMIT {PH}", (lote_id, limit))
         else:
-            cur.execute(f"""
-                SELECT m.*, l.sku, l.lote as num_lote, l.endereco
-                FROM movimentos m JOIN lotes l ON m.lote_id=l.id
-                ORDER BY m.data_mov DESC LIMIT {PH}
-            """, (limit,))
+            cur.execute(f"SELECT m.*,l.sku,l.lote as num_lote,l.endereco FROM movimentos m JOIN lotes l ON m.lote_id=l.id ORDER BY m.data_mov DESC LIMIT {PH}", (limit,))
         return [dict(r) for r in cur.fetchall()]
 
 @app.post("/api/importar")
@@ -365,24 +319,16 @@ async def importar_csv(payload: dict):
                 end  = l.get("endereco","").strip().upper() or "SEM-ENDERECO"
                 qty  = float(str(l.get("quantidade","0")).strip().replace(",",".") or 0)
                 if not all([sku, lote, val]) or qty <= 0:
-                    erros.append(f"Linha {i}: incompleto (sku={sku} lote={lote} val={val} qty={qty})")
-                    continue
+                    erros.append(f"Linha {i}: incompleto"); continue
                 if DATABASE_URL:
-                    cur.execute(f"""
-                        INSERT INTO lotes (sku,descricao,lote,validade,quantidade,unidade,endereco,fornecedor)
-                        VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH}) RETURNING id
-                    """, (sku, l.get("descricao",""), lote, val, qty,
-                          l.get("unidade","UN") or "UN", end, l.get("fornecedor","")))
+                    cur.execute(f"INSERT INTO lotes (sku,descricao,lote,validade,quantidade,unidade,endereco,fornecedor) VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH}) RETURNING id",
+                                (sku, l.get("descricao",""), lote, val, qty, l.get("unidade","UN") or "UN", end, l.get("fornecedor","")))
                     lid = cur.fetchone()["id"]
                 else:
-                    cur.execute(f"""
-                        INSERT INTO lotes (sku,descricao,lote,validade,quantidade,unidade,endereco,fornecedor)
-                        VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH})
-                    """, (sku, l.get("descricao",""), lote, val, qty,
-                          l.get("unidade","UN") or "UN", end, l.get("fornecedor","")))
+                    cur.execute(f"INSERT INTO lotes (sku,descricao,lote,validade,quantidade,unidade,endereco,fornecedor) VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH})",
+                                (sku, l.get("descricao",""), lote, val, qty, l.get("unidade","UN") or "UN", end, l.get("fornecedor","")))
                     lid = cur.lastrowid
-                cur.execute(f"INSERT INTO movimentos (lote_id,tipo,quantidade,usuario) VALUES ({PH},{PH},{PH},{PH})",
-                            (lid, "ENTRADA", qty, "importacao_csv"))
+                cur.execute(f"INSERT INTO movimentos (lote_id,tipo,quantidade,usuario) VALUES ({PH},{PH},{PH},{PH})", (lid,"ENTRADA",qty,"importacao_csv"))
                 ok += 1
             except Exception as e:
                 erros.append(f"Linha {i}: {str(e)}")
@@ -401,8 +347,7 @@ def exportar():
         d = dict(r)
         w.writerow([d.get(k,"") for k in ["id","sku","descricao","lote","validade","quantidade","unidade","endereco","fornecedor","data_receb"]])
     output.seek(0)
-    return StreamingResponse(iter([output.getvalue()]),
-        media_type="text/csv",
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=fefo_estoque.csv"})
 
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
