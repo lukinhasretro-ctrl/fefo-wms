@@ -630,24 +630,42 @@ function lerCSV(e) {
 function importarPaste() { processarCSVTexto(document.getElementById('csv-paste').value); }
 
 async function processarCSVTexto(txt) {
+  // normaliza quebras de linha (Windows \r\n → \n)
+  txt = txt.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = txt.trim().split('\n').filter(l => l.trim());
   if(lines.length < 2) { toast('CSV vazio ou sem dados','err'); return; }
-  // detecta separador: TAB tem prioridade, depois ponto-e-vírgula, depois vírgula
-  const sep = lines[0].includes('\t') ? '\t' : lines[0].includes(';') ? ';' : ',';
-  const headers = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/['"]/g,''));
+
+  // detecta separador contando ocorrências na primeira linha
+  const countTab   = (lines[0].match(/\t/g)||[]).length;
+  const countSemi  = (lines[0].match(/;/g)||[]).length;
+  const countComma = (lines[0].match(/,/g)||[]).length;
+  const sep = countTab > 0 ? '\t' : countSemi >= countComma ? ';' : ',';
+
+  // limpa BOM UTF-8 que o Excel às vezes adiciona
+  const rawHeaders = lines[0].replace(/^\uFEFF/, '').split(sep);
+  const headers = rawHeaders.map(h => h.trim().toLowerCase().replace(/['"]/g,''));
+
+  console.log('Separador detectado:', sep === '\t' ? 'TAB' : sep);
+  console.log('Cabeçalhos:', headers);
+
   const linhas = [];
   for(let i=1;i<lines.length;i++) {
+    if(!lines[i].trim()) continue;
     const vals = lines[i].split(sep).map(v => v.trim().replace(/^["']|["']$/g,''));
     const obj = {};
     headers.forEach((h,j) => obj[h] = vals[j]||'');
     linhas.push(obj);
   }
+
+  console.log('Primeira linha parseada:', linhas[0]);
+
   try {
     const r = await api('/api/importar', {method:'POST', body: JSON.stringify({linhas})});
-    if(r.erros.length) console.warn('Erros na importação:', r.erros);
+    console.log('Resposta importação:', r);
+    if(r.erros.length) console.warn('Erros:', r.erros);
     const msg = r.importados > 0
       ? `${r.importados} lote(s) importado(s)${r.erros.length?' · '+r.erros.length+' ignorado(s)':''}`
-      : `Nenhum lote importado. Erros: ${r.erros.slice(0,3).join(' | ')}`;
+      : `Nenhum lote importado. Verifique o console (F12) para detalhes.`;
     toast(msg, r.importados > 0 ? 'ok' : 'err');
   } catch(e) { toast(e.message,'err'); }
 }
